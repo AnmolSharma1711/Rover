@@ -82,6 +82,39 @@
         #btn-s { grid-column: 2; grid-row: 2; }
         #btn-r { grid-column: 3; grid-row: 2; }
         #btn-b { grid-column: 2; grid-row: 3; }
+        
+        /* Voice Input Styles */
+        .voice-btn {
+            background-color: #9C27B0;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+        .voice-btn:hover {
+            background-color: #8a1fa8;
+        }
+        .voice-btn.listening {
+            background-color: #ff5722;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .voice-transcript {
+            background-color: #333;
+            color: #90EE90;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            min-height: 20px;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -90,6 +123,9 @@
     
     <button class="connect-btn" id="connectBtn">Connect to RoverBLE</button>
     <div id="status">Status: Disconnected</div>
+    
+    <button class="voice-btn" id="voiceBtn">🎤 Start Voice Input</button>
+    <div class="voice-transcript" id="voiceTranscript">Listening for voice commands...</div>
 
     <div class="d-pad">
         <button class="control-btn" id="btn-f" onmousedown="sendCommand('F')" onmouseup="sendCommand('S')" ontouchstart="sendCommand('F')" ontouchend="sendCommand('S')">F</button>
@@ -111,11 +147,103 @@
         const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
         const UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
         
+        // Word to Project Mapping
+        const wordProjectMap = {
+            'project1': ['generator', 'system'],
+            'project2': ['drone', 'fire'],
+            'project3': ['rickshaw', 'alcohol'],
+            'project4': ['water', 'management']
+        };
+        
         let bleDevice;
         let rxCharacteristic;
         let projectModeActive = false;
         let activeProject = null;
         const statusDiv = document.getElementById('status');
+        const voiceTranscript = document.getElementById('voiceTranscript');
+        const voiceBtn = document.getElementById('voiceBtn');
+        
+        // Speech Recognition Setup
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+        let isListening = false;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.language = 'en-US';
+
+            recognition.onstart = () => {
+                isListening = true;
+                voiceBtn.classList.add('listening');
+                voiceBtn.textContent = '🎤 Listening...';
+                voiceTranscript.textContent = 'Listening for commands...';
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i].transcript.toLowerCase();
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+
+                // Display transcript
+                voiceTranscript.textContent = finalTranscript || interimTranscript || 'Listening...';
+
+                // Process final transcript for project keywords
+                if (finalTranscript) {
+                    processVoiceCommand(finalTranscript);
+                }
+            };
+
+            recognition.onerror = (event) => {
+                voiceTranscript.textContent = `Error: ${event.error}`;
+                console.error('Speech recognition error', event.error);
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                voiceBtn.classList.remove('listening');
+                voiceBtn.textContent = '🎤 Start Voice Input';
+            };
+
+            voiceBtn.addEventListener('click', () => {
+                if (isListening) {
+                    recognition.stop();
+                } else {
+                    recognition.start();
+                }
+            });
+        } else {
+            voiceBtn.textContent = '❌ Voice not supported';
+            voiceBtn.disabled = true;
+            voiceTranscript.textContent = 'Web Speech API not supported in this browser';
+        }
+
+        function processVoiceCommand(transcript) {
+            const words = transcript.toLowerCase().split(/\s+/);
+            
+            // Check against all project keywords
+            for (const [project, keywords] of Object.entries(wordProjectMap)) {
+                for (const keyword of keywords) {
+                    if (words.includes(keyword)) {
+                        const projectNumber = project.replace('project', '');
+                        voiceTranscript.textContent = `✓ Detected: "${keyword}" → Project ${projectNumber}`;
+                        sendProjectCommand(projectNumber);
+                        return;
+                    }
+                }
+            }
+            
+            voiceTranscript.textContent = `Transcript: "${transcript}" - No matching keywords found`;
+        }
 
         document.getElementById('connectBtn').addEventListener('click', async () => {
             try {
@@ -190,7 +318,7 @@
         async function sendProjectCommand(projectCode) {
             projectModeActive = true;
             activeProject = projectCode;
-            statusDiv.innerText = `Status: Navigating to ${projectCode}`;
+            statusDiv.innerText = `Status: Navigating to Project ${projectCode}`;
             statusDiv.style.backgroundColor = "#ff9800";
             await writeBleCommand(projectCode);
         }
